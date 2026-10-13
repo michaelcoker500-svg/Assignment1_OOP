@@ -484,3 +484,232 @@ def finish_entry(result, saved_title, saved_lines):
     else:
         print()
         print("Returning to the main menu...")
+
+
+def enrollment_review_lines(draft):
+    """Lines for the review screen. Uses .get() so missing answers do not crash."""
+    student = draft.get("student_id_obj")
+    course = draft.get("course_code_obj")
+    if student is not None:
+        Fullname = student.Fullname + "  (existing student)"
+    else:
+        Fullname = draft.get("Fullname", "(not entered)")
+    if course is not None:
+        title = course.title + "  (existing course)"
+        lessons = course.total_lessons
+    else:
+        title = draft.get("course_title", "(not entered)")
+        lessons = draft.get("lessons", "(not entered)")
+    return [f"Student ID    : {draft.get('student_id', '(not entered)')}",
+            f"FullName      : {Fullname}",
+            f"Course Code   : {draft.get('course_code', '(not entered)')}",
+            f"Course Title  : {title}",
+            f"Lessons       : {lessons}"]
+
+
+def enrollment_problems(portal, draft):
+    """Final validation just before saving."""
+    problems = []
+    student = draft.get("student_id_obj")
+    course = draft.get("course_code_obj")
+    if student is not None and course is not None:
+        if portal.find_enrollment_for(student, course) is not None:
+            problems.append("This student is already enrolled in this course.")
+            problems.append("Edit the Student ID or the Course Code.")
+    return problems
+
+
+def enroll_student(portal):
+    draft = {}  # TEMPORARY storage.
+    fields = [
+        {"key": "student_id", "label": "Student ID", "check": check_id,
+         "store": portal.students, "what": "Student", "mode": "reuse"},
+        {"key": "Fullname", "label": "Fullname", "check": check_text, "skip_if_found": "student_id"},
+        {"key": "course_code", "label": "Course Code", "check": check_id,
+         "store": portal.courses, "what": "Course", "mode": "reuse"},
+        {"key": "course_title", "label": "Course Title", "check": check_text, "skip_if_found": "course_code"},
+        {"key": "lessons", "label": "Number of Lessons", "check": check_positive_number,
+         "skip_if_found": "course_code"},
+    ]
+    result = run_entry("ADD NEW ENROLLMENT", fields, draft,
+                       enrollment_review_lines, enrollment_problems, portal)
+    if result == "save":
+        enrollment = portal.save_enrollment_draft(draft)  # Objects are created and stored HERE.
+        finish_entry(result, "ENROLLMENT SAVED", ["Saved successfully.", ""] + enrollment.detail_lines())
+    else:
+        finish_entry(result, "", [])  # The draft is simply thrown away.
+
+
+def view_all_enrollments(portal):
+    count = portal.show_enrollments()
+    if count == 0:
+        show_box("NO RECORDS", ["There are no enrollments yet."])
+    else:
+        print(f"\nTotal enrollments shown: {count}")
+
+
+def complete_lesson(portal):
+    enrollment = find_record(portal.enrollments, "Enrollment", "Enrollment ID (example E001):")
+    if enrollment is None:
+        return
+    if enrollment.complete_lesson():  # Instance method changes THIS object only.
+        show_box("LESSON COMPLETED", enrollment.detail_lines())
+    else:
+        show_box("ALREADY FINISHED", ["This course is already finished.", ""] + enrollment.detail_lines())
+
+
+def view_enrollment(portal):
+    enrollment = find_record(portal.enrollments, "Enrollment", "Enrollment ID (example E001):")
+    if enrollment is not None:
+        show_box("ENROLLMENT", enrollment.detail_lines())
+
+
+def search_by_enrollment_id(portal):
+    """Partial search: 'E00' finds E001, E002 ..."""
+    text = ask_lookup("Type part of an enrollment ID (example E00):")
+    if text is None:
+        return
+    count = 0
+    for enrollment_id, enrollment in portal.enrollments.items():
+        if text in enrollment_id:
+            show_box("ENROLLMENT", enrollment.detail_lines())
+            count += 1
+    if count == 0:
+        show_box("NO MATCHES", [f"No enrollment ID contains '{text}'."])
+
+
+def search_by_student(portal):
+    student = find_record(portal.students, "Student", "Student ID (example S001):")
+    if student is None:
+        return
+    show_box("STUDENT", student.detail_lines())
+    if portal.show_enrollments(student_id=student.student_id) == 0:
+        print("\nThis student has no enrollments yet.")
+
+
+def search_by_course(portal):
+    course = find_record(portal.courses, "Course", "Course code (example PY101):")
+    if course is None:
+        return
+    show_box("COURSE", course.detail_lines())
+    if portal.show_enrollments(course_code=course.course_code) == 0:
+        print("\nNobody is enrolled in this course yet.")
+
+
+def view_by_status(portal, status, title):
+    if portal.show_enrollments(status=status) == 0:
+        show_box("NO RECORDS", [f"No {title} found."])
+
+
+def show_statistics(portal):
+    finished = 0
+    total_progress = 0
+    for enrollment in portal.enrollments.values():
+        total_progress += enrollment.progress_percent()
+        if enrollment.is_finished():
+            finished += 1
+    total = len(portal.enrollments)
+    average = total_progress / total if total > 0 else 0  # Avoid dividing by zero.
+    show_box("PORTAL STATISTICS", [
+        f"Students         : {len(portal.students)}",
+        f"Courses          : {len(portal.courses)}",
+        f"Enrollments      : {total}",
+        "",
+        f"Finished         : {finished}",
+        f"In Progress      : {total - finished}",
+        "",
+        f"Average Progress : {average:.0f}%",
+        "",
+        "Created in this run (class methods):",
+        f"Student objects  : {Student.count_students()}",
+        f"Course objects   : {Course.count_courses()}",
+    ])
+
+
+def remove_enrollment(portal):
+    enrollment = find_record(portal.enrollments, "Enrollment", "Enrollment ID to remove (example E003):")
+    if enrollment is None:
+        return
+    show_box("REMOVE ENROLLMENT", enrollment.detail_lines())
+    if ask_yes_no("Are you sure you want to remove this enrollment?"):
+        del portal.enrollments[enrollment.enrollment_id]  # Remove the key and its object.
+        print(f"\nEnrollment {enrollment.enrollment_id} removed successfully.")
+    else:
+        print("\nRemoval cancelled.")
+
+
+def show_main_menu():
+    show_title("STUDENT LEARNING PORTAL")
+    print("1. View all enrollments")
+    print("2. Enroll student")
+    print("3. Complete lesson")
+    print("4. View enrollment details")
+    print("5. Search by enrollment ID")
+    print("6. Search by student ID")
+    print("7. Search by course code")
+    print("8. View completed courses")
+    print("9. View courses in progress")
+    print("10. Show statistics")
+    print("11. Remove enrollment")
+    print("0. Exit")
+    print()
+    print(BIG_LINE)
+
+
+def load_sample_data(portal):
+    """Fictional starting data (no real people)."""
+    for text in ("S001, Ama", "S002, Kofi", "S003, Musa", "S004, Fatmata"):
+        portal.add_student(Student.from_string(text))  # Class method creates the object.
+    for text in ("PY101, Intro to Python, 5", "MTH102, Basic Algebra, 4", "ENG103, Study Skills, 3"):
+        portal.add_course(Course.from_string(text))
+    first = portal.add_enrollment(portal.students["S001"], portal.courses["PY101"])
+    second = portal.add_enrollment(portal.students["S002"], portal.courses["PY101"])
+    third = portal.add_enrollment(portal.students["S002"], portal.courses["MTH102"])
+    fourth = portal.add_enrollment(portal.students["S003"], portal.courses["ENG103"])
+    for _ in range(2):
+        first.complete_lesson()
+    for _ in range(4):
+        third.complete_lesson()
+    for _ in range(3):
+        fourth.complete_lesson()
+    second.complete_lesson()
+
+
+def main():
+    portal = Portal()  # The manager object with empty dictionaries.
+    load_sample_data(portal)
+    try:
+        while True:
+            show_main_menu()
+            choice = ask_choice(0, 11, "Choose an option: ")
+            if choice == 1:
+                view_all_enrollments(portal)
+            elif choice == 2:
+                enroll_student(portal)
+            elif choice == 3:
+                complete_lesson(portal)
+            elif choice == 4:
+                view_enrollment(portal)
+            elif choice == 5:
+                search_by_enrollment_id(portal)
+            elif choice == 6:
+                search_by_student(portal)
+            elif choice == 7:
+                search_by_course(portal)
+            elif choice == 8:
+                view_by_status(portal, "finished", "completed courses")
+            elif choice == 9:
+                view_by_status(portal, "in_progress", "courses in progress")
+            elif choice == 10:
+                show_statistics(portal)
+            elif choice == 11:
+                remove_enrollment(portal)
+            else:
+                print("\nGoodbye!")
+                break
+    except (EOFError, KeyboardInterrupt):
+        print("\n\nProgram closed. Goodbye!")
+
+
+if __name__ == "__main__":
+    main()
