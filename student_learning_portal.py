@@ -274,3 +274,213 @@ def find_record(store, what, prompt):
         if record is not None:
             return record
         show_not_found(what, text)
+
+
+
+
+# CHECK FUNCTIONS
+def check_id(text, draft):
+    value = text.upper()
+    if " " in value:
+        return None, "An ID cannot contain spaces."
+    if len(value) > 10:
+        return None, "An ID can have at most 10 characters."
+    return value, None
+
+
+def check_text(text, draft):
+    if len(text) > 30:
+        return None, "Please use 30 characters or fewer."
+    return text, None
+
+
+def check_long_text(text, draft):
+    if len(text) > 60:
+        return None, "Please use 60 characters or fewer."
+    return text, None
+
+
+def check_positive_number(text, draft):
+    try:
+        number = int(text)
+    except ValueError:
+        return None, "Please type a whole number (for example 5)."
+    if number <= 0:
+        return None, "The number must be above 0."
+    if number > 1000:
+        return None, "That number is too large."
+    return number, None
+
+
+def is_skipped(field, draft):
+    """A question is skipped when its parent ID matched an existing object."""
+    parent = field.get("skip_if_found")
+    if parent is None:
+        return False
+    return draft.get(parent + "_obj") is not None
+
+
+def handle_id_answer(field, value, draft):
+    """Look the ID up in the dictionary BEFORE any object is created.
+    Returns True if the answer is accepted, False if the question must be asked again."""
+    found = field["store"].get(value)
+    key = field["key"] + "_obj"
+    mode = field["mode"]
+
+    if mode == "reject":
+        if found is not None:
+            show_duplicate(field, value, found)
+            return False
+        draft[key] = None
+        return True
+
+    if mode == "must_exist":
+        if found is None:
+            show_not_found(field["what"], value)
+            return False
+        draft[key] = found
+        return True
+
+    # mode == "reuse": use the existing object instead of making a second one.
+    if found is None:
+        draft[key] = None
+        return True
+    show_box(f"{field['what'].upper()} FOUND", found.detail_lines())
+    print()
+    print(f"1. Use this {field['what'].lower()}")
+    print("2. Enter a different ID")
+    print()
+    if ask_choice(1, 2) == 2:
+        return False
+    draft[key] = found
+    return True
+
+
+def ask_one_field(field, draft, fields):
+    """Ask ONE question. Returns 'ok', 'back' or 'cancel'."""
+    visible = [f for f in fields if not is_skipped(f, draft)]
+    number = visible.index(field) + 1 if field in visible else 1
+    while True:
+        print()
+        print(SMALL_LINE)
+        print(f"Step {number} of {len(visible)}")
+        if "hint" in field:
+            print(field["hint"])
+        current = draft.get(field["key"])
+        if current is None:
+            print(f"{field['label']}:")
+        else:
+            print(f"{field['label']} (press Enter to keep: {current}):")
+        text = input("> ").strip()
+
+        if text.upper() == "BACK":
+            return "back"
+        if text.upper() == "CANCEL":
+            if confirm_cancel():
+                return "cancel"
+            continue
+        if text == "":
+            if current is not None:
+                return "ok"
+            show_error("This cannot be empty.")
+            continue
+
+        value, error = field["check"](text, draft)
+        if error is not None:
+            show_error(error)
+            continue
+        if "store" in field and not handle_id_answer(field, value, draft):
+            continue
+        draft[field["key"]] = value
+        return "ok"
+
+
+def missing_answers(fields, draft):
+    """List the questions that still have no answer."""
+    problems = []
+    for field in fields:
+        if not is_skipped(field, draft) and field["key"] not in draft:
+            problems.append(f"{field['label']} has not been entered.")
+    return problems
+
+
+def run_entry(title, fields, draft, review_lines, find_problems, system):
+    """Run a whole data-entry form. Returns 'save', 'cancel' or 'back'.
+    The caller creates the object ONLY when this returns 'save'."""
+    position = 0
+    direction = 1
+    show_title(title)
+    print("Tip: type BACK for the previous question,")
+    print("     or CANCEL to discard this entry.")
+
+    while True:
+        # ask the questions one by one
+        while 0 <= position < len(fields):
+            field = fields[position]
+            if is_skipped(field, draft):
+                position += direction
+                continue
+            result = ask_one_field(field, draft, fields)
+            if result == "cancel":
+                return "cancel"
+            if result == "back":
+                direction = -1
+                position -= 1
+            else:
+                direction = 1
+                position += 1
+
+        if position < 0:
+            return "back"
+
+        # review screen
+        while True:
+            editable = [f for f in fields if not is_skipped(f, draft)]
+            show_box("REVIEW RECORD", review_lines(draft))
+            print()
+            print("1. Save record")
+            number = 2
+            for field in editable:
+                print(f"{number}. Edit {field['label']}")
+                number += 1
+            cancel_number = number
+            back_number = number + 1
+            print(f"{cancel_number}. Cancel")
+            print(f"{back_number}. Back")
+            print()
+            choice = ask_choice(1, back_number)
+
+            if choice == 1:  # SAVE: validate first.
+                problems = missing_answers(fields, draft)
+                if not problems:
+                    problems = find_problems(system, draft)
+                if problems:
+                    show_box("CANNOT SAVE YET", ["Please fix this first:", ""] + problems)
+                    continue
+                return "save"
+            elif choice == cancel_number:
+                if confirm_cancel():
+                    return "cancel"
+            elif choice == back_number:
+                position = len(fields) - 1
+                direction = -1
+                break
+            else:
+                field = editable[choice - 2]
+                if ask_one_field(field, draft, fields) == "cancel":
+                    return "cancel"
+                for other in fields:
+                    if not is_skipped(other, draft) and other["key"] not in draft:
+                        if ask_one_field(other, draft, fields) == "cancel":
+                            return "cancel"
+
+
+def finish_entry(result, saved_title, saved_lines):
+    """Show the right screen after run_entry. Call this AFTER saving."""
+    if result == "save":
+        show_box(saved_title, saved_lines)
+    elif result == "cancel":
+        show_cancelled()
+    else:
+        print()
+        print("Returning to the main menu...")
