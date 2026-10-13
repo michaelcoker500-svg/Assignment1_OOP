@@ -154,3 +154,123 @@ class Portal:
             show_box("ENROLLMENT", enrollment.detail_lines())
             count += 1
         return count
+
+
+
+# ============================================================
+# Everything below uses the classes above
+# ============================================================
+
+BIG_LINE = "=" * 40
+SMALL_LINE = "-" * 40
+
+
+def show_title(text):
+    """Print a centred title between two big lines."""
+    print()
+    print(BIG_LINE)
+    print(text.center(40))
+    print(BIG_LINE)
+    print()
+
+
+def show_box(title, lines):
+    """Print a title, then every line given, then a closing line."""
+    show_title(title)
+    for line in lines:
+        print(line)
+    print()
+    print(BIG_LINE)
+
+
+def show_error(message):
+    """Print a short, friendly error message."""
+    print()
+    print(f"[!] {message}")
+
+
+def show_not_found(what, value):
+    """Screen shown when an ID does not exist in the dictionary."""
+    show_box("RECORD NOT FOUND", [
+        f"No {what.lower()} with ID {value} was found.",
+        "",
+        "Please check the ID and try again.",
+    ])
+
+
+def show_duplicate(field, value, found):
+    """Screen shown when an ID is already used. 'found' is the existing object."""
+    lines = [f"{field['label']} {value} already exists.", "", f"Existing {field['what']}:"]
+    lines = lines + found.detail_lines()
+    lines = lines + ["", f"Please enter a different {field['label']}."]
+    show_box("DUPLICATE ID", lines)
+
+
+def show_cancelled():
+    """Screen shown after the user cancels. Nothing was saved."""
+    show_box("ENTRY CANCELLED", ["Nothing was saved.", "", "Returning to the main menu..."])
+
+
+def ask_choice(first, last, prompt="Choose: "):
+    """Ask for a whole number between first and last. Keeps asking until it is valid."""
+    while True:
+        text = input(prompt).strip()
+        try:
+            number = int(text)
+        except ValueError:
+            print(f"[!] Please type a number from {first} to {last}.")
+            continue
+        if number < first or number > last:
+            print(f"[!] Please choose a number from {first} to {last}.")
+            continue
+        return number
+
+
+def ask_yes_no(question):
+    """Ask a Yes/No question. Returns True for Yes."""
+    print()
+    print(question)
+    print()
+    print("1. Yes")
+    print("2. No")
+    print()
+    return ask_choice(1, 2) == 1
+
+
+def confirm_cancel():
+    """Ask 'Cancel this entry?'. Returns True only if the user really wants to cancel."""
+    print()
+    print("Cancel this entry?")
+    print()
+    print("1. Continue")
+    print("2. Cancel")
+    print()
+    return ask_choice(1, 2) == 2
+
+
+def ask_lookup(prompt):
+    """Ask for an ID. Returns None if the user types BACK or CANCEL."""
+    print()
+    print("(Type BACK to return to the menu)")
+    print(prompt)
+    text = input("> ").strip()
+    if text.upper() in ("BACK", "CANCEL"):
+        return None
+    return text.upper()
+    # .upper() makes searching case-insensitive (s001 = S001).
+
+
+def find_record(store, what, prompt):
+    """Ask for an ID until the object is found in the dictionary 'store'.
+    Returns the object, or None if the user goes back."""
+    while True:
+        text = ask_lookup(prompt)
+        if text is None:
+            return None
+        if text == "":
+            show_error("Please type an ID.")
+            continue
+        record = store.get(text)
+        if record is not None:
+            return record
+        show_not_found(what, text)
